@@ -1,0 +1,82 @@
+SMS Terms & Opt-in Policy
+Last updated: 2026-05-07
+
+Public mirror of the SMS opt-in flow used by YourTurn.group, published so US/Canadian carrier compliance reviewers can verify our consent practices without needing a member account. The consent disclosure in section 5 below is byte-identical to the string shown to members at the moment of opt-in (and snapshotted into our SMSConsentLog audit trail). The sample messages in section 6 are the literal Jinja templates used to generate outbound SMS — the {{ ... }} placeholders are filled in server-side at send time with each member's group name, event date, host name, etc.
+
+1. Who We Are
+YourTurn.group is operated by Caellwyn AI LLC. We provide a group event coordination platform that helps small organizations manage recurring events, host rotations, and member communications. Contact us at admin@yourturn.group for compliance questions.
+
+2. What Messages We Send
+All SMS messages we send are transactional notifications about a specific group's events. We do not send marketing, promotional, or third-party content over SMS. The five message categories are:
+
+Event announcements — sent to confirmed members when an upcoming event's host and venue are set.
+RSVP requests — ask the member to reply 1/2/3 to confirm attendance.
+Host reminders — sent to the member whose turn it is to host that week.
+Cancellation notices — sent if a scheduled event is called off.
+Secretary status pings — sent to a group's secretary summarizing the current host queue.
+3. Who Can Opt In
+Only existing members of an existing group can opt in to SMS. SMS is never the first contact channel. The flow is:
+
+A group secretary creates a group and invites a member by email.
+The member accepts the invitation by clicking a unique link in that email and setting a password.
+The member signs in and lands on their member dashboard. Email is the default and only channel at this point.
+If — and only if — the member chooses to switch their notification channel to SMS, the opt-in flow described in section 4 begins.
+Members can never be opted in to SMS by their secretary, by another member, or by an administrator. SMS opt-in is a self-service action that requires the member to enter a verification code that we send to their phone — this proves the member controls the number and is making the decision themselves.
+
+4. How a Member Opts In
+Member signs in to their member portal account.
+Member navigates to Profile → Edit profile.
+Under the Notifications section, member selects the SMS (text) radio button. This reveals the SMS opt-in panel.
+The opt-in disclosure (quoted verbatim in section 5 below) appears in a highlighted callout above the phone-number input and the Send code button.
+Member types their phone number and clicks Send code. We send a 6-digit verification code via Twilio Verify to the entered number. The member's phone receiving this single transactional code is itself a transactional message and not yet an opt-in commitment.
+Member receives the code on their phone, returns to the page, types the code into the verification input, and clicks Verify.
+Only when the code is verified do we record the opt-in. We write a row to SMSConsentLog capturing: timestamp, member ID, group ID, the exact disclosure text shown, the member's IP address, their browser User-Agent, and the method (web_form). This row is immutable and retained indefinitely as proof of consent.
+See the appendix at the end of this document for how to view the actual rendered opt-in UI (screenshots-on-request and the option of a temporary read-only test account).
+
+5. Exact Consent Disclosure
+This is the verbatim disclosure text shown to the member at the moment of opt-in, adjacent to and above the Send code button that initiates the verification SMS. The text is rendered server-side with the member's group name substituted into {group_name}:
+
+By verifying your phone, you agree to receive event reminders, RSVP requests, and host messages from [your group name] via SMS. Message frequency varies (typically 1-3 msgs/week). Msg & data rates may apply. Reply STOP to cancel, HELP for help.
+
+The string above is sourced from the same Python constant (CONSENT_TEXT_V1) that the member-portal opt-in screen renders, so this page and the actual application can never drift out of sync. When we revise the disclosure text we add a new versioned constant (CONSENT_TEXT_V2 etc.) and keep V1 for historical lookup — we never edit the original in place.
+
+6. Sample Messages
+The following are the literal templates for each SMS category. {{ ... }} placeholders are filled in server-side at send time with the group's name, event date, host name, and so on.
+
+Event announcement
+{{ GROUP_NAME }}: {{ EVENT_DAY }} {{ EVENT_DATE }} at {{ LOCATION_NAME }}, {{ START_TIME }}. Reply 1 {rsvp_code}=going, 2=maybe, 3=no.
+Host reminder
+{{ GROUP_NAME }}: you're hosting {{ EVENT_DATE }} ({{ TIER_LABEL }}). Pick a venue: {{ HOST_PICKER_URL }}
+RSVP confirmation reply
+Got it: {{ RESPONSE_LABEL }} for {{ EVENT_NAME }} on {{ EVENT_DATE }}. Reply STOP to opt out.
+Event cancellation
+{{ GROUP_NAME }}: {{ EVENT_DATE }} event is CANCELLED. Reply STOP to opt out.
+Secretary status ping
+{{ GROUP_NAME }} {{ EVENT_DAY }} status. At Bat: {{ AT_BAT_HOST }} ({{ AT_BAT_CONFIRMED }}). On Deck: {{ ON_DECK_HOST }}. In Hole: {{ IN_HOLE_HOST }}. {{ DASHBOARD_URL }}
+7. Frequency
+Message frequency varies with the cadence of the member's group, but typically falls in the range of 1 to 3 messages per week. A weekly group hits the upper end of that range during weeks when the member is the host (announcement + reminder + day-of status ping). A monthly group typically sends fewer than 1 message per week on average.
+
+8. STOP / HELP / START Keywords
+All carrier-required keywords are honored at the platform level. A member can reply with any of these keywords to any of our messages and we will respond as follows:
+
+Keyword	Effect	Reply
+STOP	Immediately opts the member out. Sets receives_sms=false on the member record. Records an opt-out row in SMSConsentLog. No further messages of any type will be sent to that number.	You're opted out of {{ GROUP_NAME }} SMS. Reply START to re-opt in. You won't get any group notifications until you opt back in.
+HELP	Sends the help reply. Does not change opt-in state. Rate-limited to 1 reply per source number per 24 hours.	{{ GROUP_NAME }} reminders. Reply STOP to opt out, START to re-opt-in. Msg & data rates may apply.
+START (or UNSTOP)	Re-opts in a member who had previously sent STOP. Records an opt-in row in SMSConsentLog with method sms_start.	You're back on {{ GROUP_NAME }} SMS. Reply STOP to opt out. Msg & data rates may apply.
+9. How to Opt Out
+Members have two self-service ways to stop receiving SMS:
+
+Reply STOP to any of our messages. Effective immediately. Handled by our Twilio inbound-message webhook.
+Switch back to email in their profile: Profile → Edit profile → Notifications → Email. The toggle posts to /member/sms/disable (a JSON endpoint, not a navigable link) which flips the notification channel and records the opt-out.
+Either action writes an immutable SMSConsentLog row recording the opt-out event, method, and timestamp.
+
+10. Data Sharing With Twilio
+We use Twilio (twilio.com) to deliver SMS. To do this we share the member's phone number in E.164 format, the message body to be delivered, and we receive delivery status callbacks (delivered, failed, undelivered, etc.). We do not share any other personally identifying information with Twilio. The full sub-processor list is in our Privacy Policy.
+
+11. Contact
+Compliance questions or carrier-audit requests: admin@yourturn.group.
+
+Appendix: How to view the actual opt-in UI
+The opt-in flow described in section 4 lives behind member authentication at /member/profile/edit in the member portal. The disclosure rendered there uses the same CONSENT_TEXT_V1 string quoted verbatim in section 5 above, so a reviewer evaluating consent can rely on the public copy on this page being byte-identical to what an opted-in member actually saw.
+
+Screenshots of the rendered UI are available on request from admin@yourturn.group and are also attached to the Trust Hub / Toll-Free Verification submission. We can also provide temporary read-only test-account credentials by request.
